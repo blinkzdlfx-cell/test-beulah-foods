@@ -7,7 +7,7 @@ initHeader(document.getElementById("site-header-nav"));
 const form = document.getElementById("forgot-password-form");
 const alertBox = document.getElementById("form-alert");
 const submitBtn = document.getElementById("forgot-password-submit");
-const RESET_PASSWORD_URL = new URL("/reset-password.html", window.location.origin).toString();
+const RESET_PASSWORD_URL = new URL("/storefront/reset-password.html", window.location.origin).toString();
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
