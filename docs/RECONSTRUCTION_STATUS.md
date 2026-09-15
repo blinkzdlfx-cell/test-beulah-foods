@@ -2,7 +2,7 @@
 
 ## Current phase
 
-**Phase 2 — Environment separation**
+**Phase 4 — Staging connection**
 
 ## Status
 
@@ -10,9 +10,9 @@
 |---|---|---|
 | 0 — Contract/freeze | Complete | Reconstruction rules and safety boundaries documented. |
 | 1 — Application working copy | Complete | Production application source and Worker reconstructed into `reconstruction`; production migrations and deployment config remain excluded. |
-| 2 — Environment separation | In progress | Staging Supabase verified healthy; browser clients now target staging; staging Worker configuration remains dependent on Cloudflare setup. |
-| 3 — Clean database foundation | Pending | Target schema and clean migration chain. |
-| 4 — Staging connection | Pending | Connect application and Worker to staging resources. |
+| 2 — Environment separation | Complete* | Browser clients target staging and an isolated staging Worker configuration is committed. Cloudflare Worker creation/deployment remains external. |
+| 3 — Clean database foundation | Complete* | Staging schema was inspected and verified as a data-empty application schema with the target tables, inventory semantics, RLS policies and trusted RPC boundaries; trusted payment finalization was added as a unique migration. Baseline provenance still needs to be consolidated into a reproducible SQL source file before final reconstruction sign-off. |
+| 4 — Staging connection | In progress | Browser → staging Supabase is configured. Worker deployment is waiting on staging Cloudflare Worker availability and secrets. |
 | 5 — Functional smoke test | Pending | First real customer/admin browser test. |
 | 6 — Security tests | Pending | RLS, RPC and customer/admin isolation. |
 | 7 — Payment/business tests | Pending | Paystack test lifecycle, inventory, reservation and cart. |
@@ -24,26 +24,63 @@
 
 The reconstruction workflow completed successfully. The reconstructed branch contains the production application source, including `worker.js`, storefront and admin application trees. Production migration history and production deployment configuration were intentionally excluded from the reconstructed source copy.
 
-## Phase 2 work completed so far
+## Phase 2 verification
 
 - Staging Supabase project: `cveghsjotmfygknqyvxg`
-- Staging Supabase URL: `https://cveghsjotmfygknqyvxg.supabase.co`
 - Staging Supabase status: `ACTIVE_HEALTHY`
-- Storefront browser Supabase client now targets staging.
-- Admin browser Supabase client now targets staging.
-- The source-reconstruction workflow is manual-only so it cannot overwrite environment-specific staging configuration on every commit.
-- Browser code continues to use only a publishable Supabase key; server-only secrets are not committed.
-- Cloudflare staging Worker creation remains an external dependency being handled separately.
+- Storefront browser Supabase client targets staging.
+- Admin browser Supabase client targets staging.
+- Source reconstruction is manual-only so environment-specific staging configuration cannot be overwritten on every commit.
+- `wrangler.staging.toml` defines an isolated `beulah-foods-staging` Worker with no production route configuration.
+- Server-only secrets are not committed.
 
-## Phase 3 preparation
+## Phase 3 database findings
 
-The staging database is a separate project and is the target for one clean reviewed baseline. Historical production migrations remain reference evidence only and will not be replayed as the staging migration chain.
+The staging project was not actually schema-empty when reconstruction work reached the database stage. It contained the expected application tables and current target-shaped columns. No destructive reset was performed.
+
+Verified application tables:
+
+- `customer_profiles`
+- `admin_users`
+- `categories`
+- `products`
+- `delivery_settings`
+- `promo_codes`
+- `orders`
+- `order_items`
+- `reservations`
+- `payments`
+- `customer_carts`
+- `customer_cart_items`
+
+Verified inventory model:
+
+`stock_quantity` is physical stock and `reserved_quantity` is held stock; available stock is `stock_quantity - reserved_quantity`.
+
+Verified target database behavior already present:
+
+- customer/admin RLS boundaries
+- customer order/item/reservation/payment visibility
+- admin catalogue and operational access
+- customer cart RPCs
+- trusted pending-order creation
+- reservation release/cancellation/retry functions
+- order-number sequence
+- unique payment provider references
+
+A missing trusted payment finalizer was added as `0002_payment_finalization.sql`. It is service-role-only, checks the provider amount, locks payment/order/reservation rows, consumes physical stock only on successful payment, releases held stock on failure, and is idempotent for already-finalized states.
+
+### Baseline provenance note
+
+The database structure was already present in staging before this reconstruction pass could establish a single reproducible baseline file. Therefore we did not destroy it merely to recreate the same schema. The remaining Phase 3 documentation task is to capture the verified schema and functions into one reproducible baseline source before reconstruction receives final sign-off.
+
+## Phase 4
+
+Browser Supabase configuration is connected to staging. Full Worker/API connection is pending only on the Cloudflare staging Worker and its staging secrets/configuration.
 
 ## Database rule
 
-The database foundation is treated as a controlled baseline. We will not reproduce the historical duplicate migration-prefix problem by continually adding speculative patch migrations.
-
-If a foundational database decision is wrong before acceptance, correct the target baseline and validate it again. Once accepted, subsequent schema changes must use deliberate, unique migrations with documented purpose and tests.
+The foundational schema must have one reproducible source of truth. Historical production migration files remain reference evidence only. No duplicate migration-prefix history will be copied forward.
 
 ## Documentation rule
 
