@@ -1,0 +1,6 @@
+*.md
+supabase/
+worker.js
+wrangler.toml
+.assetsignore
+.gitignore
