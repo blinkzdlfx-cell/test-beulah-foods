@@ -2,19 +2,15 @@
 
 ## Current phase
 
-**Phase 1 — Reconstruct the application working copy**
-
-## Objective
-
-Create a fresh staging working copy of the known-working production application while preserving the UI and isolating production resources.
+**Phase 2 — Environment separation**
 
 ## Status
 
 | Phase | Status | Notes |
 |---|---|---|
 | 0 — Contract/freeze | Complete | Reconstruction rules and safety boundaries documented. |
-| 1 — Application working copy | In progress | Automated source reconstruction is prepared. |
-| 2 — Environment separation | Pending | Staging Supabase/Worker/provider configuration. |
+| 1 — Application working copy | Complete | Production application source and Worker reconstructed into `reconstruction`; production migrations and deployment config remain excluded. |
+| 2 — Environment separation | In progress | Staging Supabase verified healthy; environment contract established; application configuration still needs staging adaptation. |
 | 3 — Clean database foundation | Pending | Target schema and clean migration chain. |
 | 4 — Staging connection | Pending | Connect application and Worker to staging resources. |
 | 5 — Functional smoke test | Pending | First real customer/admin browser test. |
@@ -24,13 +20,19 @@ Create a fresh staging working copy of the known-working production application 
 | 9 — Stabilization | Pending | Root-cause fixes and repeated verification. |
 | 10 — Reconstruction complete | Pending | Ready for production-promotion planning. |
 
-## Immediate next actions
+## Phase 1 verification
 
-1. Run the reconstruction workflow on branch `reconstruction`.
-2. Verify the resulting source tree against production.
-3. Keep production-only migration/configuration files out of the reconstructed working copy.
-4. Create the environment configuration contract.
-5. Finalize the clean database baseline before applying it to staging.
+The reconstruction workflow completed successfully. The reconstructed branch contains the production application source, including the Worker and browser application trees. The production `supabase/migrations` history and production deployment configuration were intentionally excluded by the reconstruction process.
+
+## Phase 2 observations
+
+- Staging Supabase project: `cveghsjotmfygknqyvxg`
+- Staging Supabase URL: `https://cveghsjotmfygknqyvxg.supabase.co`
+- Staging Supabase is `ACTIVE_HEALTHY`.
+- Staging database is intended to remain data-empty until the clean baseline is applied.
+- Browser clients must use staging Supabase URL/public key after configuration adaptation.
+- Worker secrets must be supplied through the staging deployment environment and never committed.
+- Cloudflare staging Worker creation remains an external dependency being handled separately.
 
 ## Database rule
 
