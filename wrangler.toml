@@ -1,0 +1,25 @@
+name = "beulah-foods-staging"
+main = "worker.js"
+compatibility_date = "2026-09-10"
+keep_vars = true
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+head_sampling_rate = 1
+persist = true
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 1
+persist = true
+
+[assets]
+directory = "."
+binding = "ASSETS"
+html_handling = "none"
+run_worker_first = true
