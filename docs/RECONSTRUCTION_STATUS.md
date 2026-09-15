@@ -10,7 +10,7 @@
 |---|---|---|
 | 0 — Contract/freeze | Complete | Reconstruction rules and safety boundaries documented. |
 | 1 — Application working copy | Complete | Production application source and Worker reconstructed into `reconstruction`; production migrations and deployment config remain excluded. |
-| 2 — Environment separation | In progress | Staging Supabase verified healthy; environment contract established; application configuration still needs staging adaptation. |
+| 2 — Environment separation | In progress | Staging Supabase verified healthy; browser clients now target staging; staging Worker configuration remains dependent on Cloudflare setup. |
 | 3 — Clean database foundation | Pending | Target schema and clean migration chain. |
 | 4 — Staging connection | Pending | Connect application and Worker to staging resources. |
 | 5 — Functional smoke test | Pending | First real customer/admin browser test. |
@@ -22,17 +22,22 @@
 
 ## Phase 1 verification
 
-The reconstruction workflow completed successfully. The reconstructed branch contains the production application source, including the Worker and browser application trees. The production `supabase/migrations` history and production deployment configuration were intentionally excluded by the reconstruction process.
+The reconstruction workflow completed successfully. The reconstructed branch contains the production application source, including `worker.js`, storefront and admin application trees. Production migration history and production deployment configuration were intentionally excluded from the reconstructed source copy.
 
-## Phase 2 observations
+## Phase 2 work completed so far
 
 - Staging Supabase project: `cveghsjotmfygknqyvxg`
 - Staging Supabase URL: `https://cveghsjotmfygknqyvxg.supabase.co`
-- Staging Supabase is `ACTIVE_HEALTHY`.
-- Staging database is intended to remain data-empty until the clean baseline is applied.
-- Browser clients must use staging Supabase URL/public key after configuration adaptation.
-- Worker secrets must be supplied through the staging deployment environment and never committed.
+- Staging Supabase status: `ACTIVE_HEALTHY`
+- Storefront browser Supabase client now targets staging.
+- Admin browser Supabase client now targets staging.
+- The source-reconstruction workflow is manual-only so it cannot overwrite environment-specific staging configuration on every commit.
+- Browser code continues to use only a publishable Supabase key; server-only secrets are not committed.
 - Cloudflare staging Worker creation remains an external dependency being handled separately.
+
+## Phase 3 preparation
+
+The staging database is a separate project and is the target for one clean reviewed baseline. Historical production migrations remain reference evidence only and will not be replayed as the staging migration chain.
 
 ## Database rule
 
