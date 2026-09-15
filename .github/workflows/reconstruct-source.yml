@@ -2,6 +2,9 @@ name: Reconstruct production source
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - reconstruction
 
 permissions:
   contents: write
