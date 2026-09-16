@@ -387,9 +387,11 @@ function updateReservationCountdown() {
 function isDeliveryEnabled() {
   return Boolean(deliverySettings?.is_delivery_enabled);
 }
+
 function calculateLocalDelivery() {
   return isDeliveryEnabled() ? Math.max(0, Number(deliverySettings?.delivery_fee ?? 0)) : 0;
 }
+
 function getLocalSubtotal() {
   return checkoutItems.reduce(
     (total, item) =>
@@ -564,27 +566,49 @@ form.addEventListener("submit", async (event) => {
         "One or more products do not have enough stock. Return to your cart and adjust the quantity.",
         "error",
       );
-    else if (message.includes("DELIVERY_UNAVAILABLE"))
-      setStatus("Delivery is currently unavailable. Please try again later.", "error");
-    else if (message.includes("PROMO_INVALID"))
-      setStatus("That promo code is not valid for this order.", "error");
-    else if (message.includes("PROMO_LIMIT_REACHED"))
-      setStatus("That promo code has reached its usage limit.", "error");
-    else if (message.includes("ACTIVE_RESERVATION_LIMIT"))
+    else if (message.includes("PRODUCT_UNAVAILABLE"))
       setStatus(
-        "You already have an active payment reservation. Complete or cancel it before starting another checkout.",
+        "One or more products are no longer available. Please return to your cart.",
+        "error",
+      );
+    else if (message.includes("DELIVERY_DETAILS_REQUIRED"))
+      setStatus("Add your delivery details in My Account to continue.", "error");
+    else if (message.includes("DELIVERY_CONFIGURATION_INVALID"))
+      setStatus("Delivery is temporarily unavailable. Please try again later.", "error");
+    else if (message.includes("PROMO_INVALID"))
+      setStatus("That promo code is invalid or inactive.", "error");
+    else if (message.includes("PROMO_MINIMUM_NOT_MET"))
+      setStatus("This promo code does not meet the minimum order amount.", "error");
+    else if (message.includes("ORDER_RESERVATION_EXPIRED")) {
+      setReservationState("expired", {
+        id: pendingOrderId,
+        order_number: reservationOrder.textContent,
+      });
+      form.hidden = true;
+      setStatus(
+        "Your payment reservation has expired. Retry checkout to reserve the items again.",
+        "error",
+      );
+    } else if (message.includes("PAYMENT_INITIALIZATION_FAILED"))
+      setStatus(
+        "Your order is reserved, but payment could not be opened. Please try again.",
         "error",
       );
     else if (error?.code === "PAYMENT_PROVIDER_INITIALIZATION_FAILED")
-      setStatus("Paystack could not initialize this payment. Please try again while your reservation is still active.", "error");
+      setStatus(
+        "Paystack could not initialize this payment. Please try again while your reservation is still active.",
+        "error",
+      );
     else if (error?.code === "PAYMENT_ATTEMPT_AMBIGUOUS")
-      setStatus("This payment attempt is already linked to Paystack but needs review before retrying.", "error");
-    else
-      setStatus(error?.message || "Could not start payment. Please try again.", "error");
+      setStatus(
+        "This payment attempt is already linked to Paystack but needs review before retrying.",
+        "error",
+      );
+    else setStatus(error?.message || "Could not start payment. Please try again.", "error");
   }
 });
 
 init().catch((error) => {
   console.error(error);
-  setStatus("Could not load checkout. Please refresh and try again.", "error");
+  setStatus("We could not prepare checkout. Please try again.", "error");
 });
