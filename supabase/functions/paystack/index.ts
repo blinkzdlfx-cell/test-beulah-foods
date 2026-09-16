@@ -112,8 +112,11 @@ async function initialize(request: Request) {
     return json({ error: "PAYMENT_ATTEMPT_AMBIGUOUS" }, 409);
   }
 
-  const amountKobo = Math.round(Number(order.total) * 100);
-  if (!Number.isInteger(amountKobo) || amountKobo <= 0) return json({ error: "INVALID_ORDER_AMOUNT" }, 422);
+  const amountNaira = Number(order.total);
+  const amountKobo = Math.round(amountNaira * 100);
+  if (!Number.isFinite(amountNaira) || amountNaira <= 0 || !Number.isInteger(amountKobo) || amountKobo <= 0) {
+    return json({ error: "INVALID_ORDER_AMOUNT" }, 422);
+  }
 
   const reference = `BEULAH-${orderId}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   const callbackUrl = `${STOREFRONT_URL}/payment-callback`;
@@ -148,7 +151,8 @@ async function initialize(request: Request) {
     .from("payments")
     .update({
       provider_reference: reference,
-      amount: amountKobo,
+      // payments.amount is stored in NGN. Paystack receives amountKobo above.
+      amount: amountNaira,
       raw_response: {
         ...providerData,
         authorization_url: providerData.data.authorization_url,
