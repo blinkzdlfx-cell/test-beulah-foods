@@ -1,0 +1,45 @@
+-- Restrict SECURITY DEFINER functions that are internal-only or administrative.
+-- Keep customer-facing RPCs callable by authenticated users where their own
+-- function-level authorization checks are required by the application.
+
+REVOKE EXECUTE ON FUNCTION public.provision_admin(uuid, text)
+FROM anon, authenticated;
+
+REVOKE EXECUTE ON FUNCTION public.release_expired_reservations()
+FROM anon, authenticated;
+
+REVOKE EXECUTE ON FUNCTION public.enforce_two_open_reservations()
+FROM anon, authenticated;
+
+REVOKE EXECUTE ON FUNCTION public.handle_new_customer()
+FROM anon, authenticated;
+
+REVOKE EXECUTE ON FUNCTION public.rls_auto_enable()
+FROM anon, authenticated;
+
+REVOKE EXECUTE ON FUNCTION public.admin_update_order_status(uuid, text)
+FROM anon;
+
+REVOKE EXECUTE ON FUNCTION public.cancel_pending_order(uuid)
+FROM anon;
+
+REVOKE EXECUTE ON FUNCTION public.create_pending_order(
+  jsonb,
+  text,
+  text,
+  text,
+  text
+)
+FROM anon;
+
+REVOKE EXECUTE ON FUNCTION public.get_customer_cart()
+FROM anon;
+
+REVOKE EXECUTE ON FUNCTION public.merge_customer_cart(jsonb)
+FROM anon;
+
+REVOKE EXECUTE ON FUNCTION public.set_customer_cart(jsonb)
+FROM anon;
+
+REVOKE EXECUTE ON FUNCTION public.retry_expired_pending_order(uuid)
+FROM anon;

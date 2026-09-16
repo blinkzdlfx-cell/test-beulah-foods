@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <base href="/storefront/" />
+  <title>Email verification — Beulah Foods</title>
+  <link rel="stylesheet" href="css/variables.css" />
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/components.css" />
+  <link rel="stylesheet" href="css/auth.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="site-header__inner">
+      <a class="site-header__logo-wrap" href="index.html" aria-label="Beulah Foods home">
+        <span class="site-header__mark" aria-hidden="true">B</span>
+        <span class="site-header__brand">Beulah Foods</span>
+      </a>
+    </div>
+  </header>
+
+  <main class="auth-page">
+    <section class="auth-card" aria-labelledby="verification-title">
+      <div id="verification-alert" class="alert alert-success" role="status">
+        Checking email verification…
+      </div>
+
+      <h1 id="verification-title">Checking your email</h1>
+      <p id="verification-message" class="auth-card__subtitle">
+        Please wait while we confirm your email address.
+      </p>
+
+      <a id="verification-shop" href="shop.html" class="btn btn-primary" hidden>Go to shop</a>
+      <p class="auth-card__footer"><a href="index.html">Go to home</a></p>
+    </section>
+  </main>
+
+  <script type="module" src="js/pages/verification-success.js"></script>
+</body>
+</html>

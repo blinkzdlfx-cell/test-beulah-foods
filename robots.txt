@@ -1,0 +1,12 @@
+User-agent: *
+Allow: /
+Disallow: /admin/
+Disallow: /storefront/account.html
+Disallow: /storefront/cart.html
+Disallow: /storefront/checkout.html
+Disallow: /storefront/orders.html
+Disallow: /storefront/order.html
+Disallow: /storefront/payment-callback.html
+Disallow: /storefront/reset-password.html
+Disallow: /storefront/forgot-password.html
+Sitemap: https://beulah-foods.blinkzdlfx.workers.dev/sitemap.xml
