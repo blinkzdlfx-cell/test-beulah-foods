@@ -5,7 +5,7 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const PAYSTACK_SECRET_KEY = Deno.env.get("PAYSTACK_SECRET_KEY")!;
-const STOREFRONT_URL = Deno.env.get("STOREFRONT_URL") || "https://beulah-foods.blinkzdlfx.workers.dev";
+const STOREFRONT_URL = Deno.env.get("STOREFRONT_URL") || "https://test-beulah-foods.blinkzdlfx.workers.dev";
 const corsHeaders = { "Access-Control-Allow-Origin": STOREFRONT_URL, "Access-Control-Allow-Headers": "authorization, apikey, content-type", "Access-Control-Allow-Methods": "GET,POST,OPTIONS" };
 const jsonHeaders = { "Content-Type": "application/json; charset=utf-8", ...corsHeaders };
 const userClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
