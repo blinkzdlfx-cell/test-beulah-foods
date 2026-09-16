@@ -55,18 +55,22 @@ async function init() {
   try {
     const response = await fetch(
       `/api/paystack/verify?reference=${encodeURIComponent(reference)}`,
-      {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      },
+      { headers: { Authorization: `Bearer ${session.access_token}` } },
     );
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data?.error || "PAYMENT_VERIFICATION_FAILED");
 
-    if (data.payment_status === "successful") {
+    const finalization = data?.finalization || {};
+    const paymentStatus = finalization.payment_status;
+    const orderId = finalization.order_id || data.order_id || null;
+    const latePayment = Boolean(finalization.late_payment);
+    const manualResolutionRequired = Boolean(finalization.manual_resolution_required);
+
+    if (paymentStatus === "successful" && !latePayment && !manualResolutionRequired) {
       clearRememberedCheckoutOrder();
-      if (data.order_id) {
-        await removePaidItems(data.order_id);
-        const orderNumber = data.order_number || (await getOrderNumber(data.order_id));
+      if (orderId) {
+        await removePaidItems(orderId);
+        const orderNumber = data.order_number || (await getOrderNumber(orderId));
         title.textContent = "Payment confirmed";
         message.textContent = `Your payment has been verified. ${orderNumber} is now paid.`;
         show(`${orderNumber} is confirmed.`, "success");
@@ -75,26 +79,36 @@ async function init() {
         message.textContent = "Your payment has been verified and your order is now paid.";
         show("Payment confirmed.", "success");
       }
-      if (data.order_id)
+      if (orderId) {
         setTimeout(() => {
-          window.location.href = `/order.html?id=${encodeURIComponent(data.order_id)}`;
+          window.location.href = `/order.html?id=${encodeURIComponent(orderId)}`;
         }, 1200);
+      }
       return;
     }
 
-    if (data.payment_status === "failed") {
+    if (paymentStatus === "successful" && latePayment) {
+      clearRememberedCheckoutOrder();
+      title.textContent = "Payment received — manual review required";
+      message.textContent =
+        "Paystack confirmed the payment, but the reservation had already expired. No stock was consumed and the order was not silently marked as paid. Our team must review this payment before fulfillment.";
+      show("Payment received. Manual resolution is required.", "error");
+      return;
+    }
+
+    if (paymentStatus === "failed") {
       clearRememberedCheckoutOrder();
       title.textContent = "Payment not completed";
       message.textContent =
-        "Paystack reported that this payment attempt failed. You can return to your orders and try again if the order is still reserved.";
+        "Paystack reported that this payment attempt failed. You can return to your orders and try again if a new reservation is available.";
       show("Payment was not confirmed.", "error");
       return;
     }
 
     title.textContent = "Payment not completed";
     message.textContent =
-      "This payment attempt was not completed. Your order can still be retried while its reservation is active.";
-    show("Your payment was not completed. You can retry from My Orders.");
+      "This payment attempt was not completed. Check your order status before trying again.";
+    show("Your payment was not completed.");
   } catch (error) {
     console.error(error);
     title.textContent = "Payment status unavailable";
