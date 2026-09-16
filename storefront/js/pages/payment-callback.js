@@ -62,14 +62,15 @@ async function init() {
 
     const finalization = data?.finalization || {};
     const paymentStatus = finalization.payment_status;
+    const orderId = finalization.order_id || data.order_id || null;
     const latePayment = Boolean(finalization.late_payment);
     const manualResolutionRequired = Boolean(finalization.manual_resolution_required);
 
     if (paymentStatus === "successful" && !latePayment && !manualResolutionRequired) {
       clearRememberedCheckoutOrder();
-      if (data.order_id) {
-        await removePaidItems(data.order_id);
-        const orderNumber = data.order_number || (await getOrderNumber(data.order_id));
+      if (orderId) {
+        await removePaidItems(orderId);
+        const orderNumber = data.order_number || (await getOrderNumber(orderId));
         title.textContent = "Payment confirmed";
         message.textContent = `Your payment has been verified. ${orderNumber} is now paid.`;
         show(`${orderNumber} is confirmed.`, "success");
@@ -78,9 +79,9 @@ async function init() {
         message.textContent = "Your payment has been verified and your order is now paid.";
         show("Payment confirmed.", "success");
       }
-      if (data.order_id) {
+      if (orderId) {
         setTimeout(() => {
-          window.location.href = `/order.html?id=${encodeURIComponent(data.order_id)}`;
+          window.location.href = `/order.html?id=${encodeURIComponent(orderId)}`;
         }, 1200);
       }
       return;
