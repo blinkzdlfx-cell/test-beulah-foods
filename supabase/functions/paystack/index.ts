@@ -204,13 +204,13 @@ async function verify(request: Request, url: URL) {
   const paidAmount = Number(transaction?.amount);
   const paid = transaction?.status === "success" && paidAmount === expectedAmount;
 
-  const finalStatus = paid ? "successful" : "failed";
+  const finalStatus = paid ? "success" : "failed";
   const { data: finalized, error: finalizeError } = await adminClient.rpc("finalize_paystack_payment", {
-    p_reference: reference,
-    p_status: finalStatus,
-    p_amount: Number.isFinite(paidAmount) ? paidAmount : 0,
-    p_raw_response: providerData,
-    p_processed_at: new Date().toISOString(),
+    target_reference: reference,
+    target_status: finalStatus,
+    target_amount_kobo: Number.isFinite(paidAmount) ? paidAmount : 0,
+    target_raw_response: providerData,
+    target_paid_at: new Date().toISOString(),
   });
   if (finalizeError) throw databaseError(finalizeError, "PAYMENT_FINALIZATION_FAILED");
 
@@ -238,13 +238,13 @@ async function webhook(request: Request) {
   const amount = Number(event?.data?.amount);
   if (!reference) return json({ error: "WEBHOOK_REFERENCE_REQUIRED" }, 400);
 
-  const status = eventName === "charge.success" ? "successful" : "failed";
+  const status = eventName === "charge.success" ? "success" : "failed";
   const { data: finalized, error: finalizeError } = await adminClient.rpc("finalize_paystack_payment", {
-    p_reference: reference,
-    p_status: status,
-    p_amount: Number.isFinite(amount) ? amount : 0,
-    p_raw_response: event,
-    p_processed_at: new Date().toISOString(),
+    target_reference: reference,
+    target_status: status,
+    target_amount_kobo: Number.isFinite(amount) ? amount : 0,
+    target_raw_response: event,
+    target_paid_at: new Date().toISOString(),
   });
   if (finalizeError) {
     console.error("Paystack webhook finalization failed", finalizeError);
