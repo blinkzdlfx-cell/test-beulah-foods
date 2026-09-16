@@ -22,20 +22,29 @@ Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   const url = new URL(request.url);
-  const route = url.pathname.replace(/^\/functions\/v1\/paystack\/?/, "").replace(/^\/+/, "");
+  const route = getRoute(url.pathname);
 
   try {
     if (route === "health" && request.method === "GET") return health();
     if (route === "initialize" && request.method === "POST") return await initialize(request);
     if (route === "verify" && request.method === "GET") return await verify(request, url);
     if (route === "webhook" && request.method === "POST") return await webhook(request);
-    return json({ error: "NOT_FOUND", version: VERSION }, 404);
+    return json({ error: "NOT_FOUND", version: VERSION, route }, 404);
   } catch (error) {
     console.error("paystack function error", error);
     if (error instanceof ResponseError) return json({ error: error.message }, error.status);
     return json({ error: "PAYMENT_SERVER_ERROR", version: VERSION }, 500);
   }
 });
+
+function getRoute(pathname: string) {
+  const path = pathname.replace(/^\/+|\/+$/g, "");
+  const marker = "/paystack/";
+  const markerIndex = path.indexOf(marker);
+  if (markerIndex >= 0) return path.slice(markerIndex + marker.length).split("/")[0];
+  if (path === "paystack") return "";
+  return path.split("/").pop() || "";
+}
 
 function health() {
   return json({
@@ -78,15 +87,13 @@ async function initialize(request: Request) {
     .eq("order_id", orderId)
     .eq("status", "active")
     .gt("expires_at", new Date().toISOString())
-    .order("created_at", { ascending: false })
-    .limit(1)
     .maybeSingle();
   if (reservationError) throw databaseError(reservationError, "RESERVATION_LOOKUP_FAILED");
-  if (!reservation) return json({ error: "ORDER_RESERVATION_EXPIRED" }, 409);
+  if (!reservation) return json({ error: "RESERVATION_EXPIRED" }, 409);
 
   const { data: payment, error: paymentError } = await adminClient
     .from("payments")
-    .select("id,amount,status,provider_reference,raw_response,attempt_number")
+    .select("id,attempt_number,provider,provider_reference,status,raw_response,amount")
     .eq("order_id", orderId)
     .eq("provider", "paystack")
     .eq("status", "pending")
@@ -94,103 +101,68 @@ async function initialize(request: Request) {
     .limit(1)
     .maybeSingle();
   if (paymentError) throw databaseError(paymentError, "PAYMENT_LOOKUP_FAILED");
-  if (!payment) return json({ error: "PAYMENT_NOT_AVAILABLE" }, 409);
+  if (!payment) return json({ error: "PAYMENT_ATTEMPT_NOT_FOUND" }, 409);
 
-  const existingAuthorization = extractAuthorization(payment.raw_response);
-  if (payment.provider_reference && existingAuthorization) {
-    return json({
-      authorization_url: existingAuthorization.authorization_url,
-      access_code: existingAuthorization.access_code,
-      reference: payment.provider_reference,
-      reservation_expires_at: reservation.expires_at,
-      payment_attempt_number: payment.attempt_number,
-      reused: true,
-      version: VERSION,
-    });
+  const raw = isRecord(payment.raw_response) ? payment.raw_response : {};
+  const storedAuthorizationUrl = typeof raw.authorization_url === "string" ? raw.authorization_url : "";
+  if (payment.provider_reference && storedAuthorizationUrl) {
+    return json({ authorization_url: storedAuthorizationUrl, reference: payment.provider_reference, reused: true, version: VERSION });
+  }
+  if (payment.provider_reference && !storedAuthorizationUrl) {
+    return json({ error: "PAYMENT_ATTEMPT_AMBIGUOUS" }, 409);
   }
 
-  if (payment.provider_reference && !existingAuthorization) {
-    return json({
-      error: "PAYMENT_ATTEMPT_REQUIRES_RETRY",
-      message: "This payment attempt already has a provider reference but no usable checkout URL. Start a fresh payment attempt.",
-      version: VERSION,
-    }, 409);
-  }
-
-  const amountKobo = toKobo(order.total);
-  if (amountKobo === null) return json({ error: "PAYMENT_AMOUNT_INVALID" }, 409);
+  const amountKobo = Math.round(Number(order.total) * 100);
+  if (!Number.isInteger(amountKobo) || amountKobo <= 0) return json({ error: "INVALID_ORDER_AMOUNT" }, 422);
 
   const reference = `BEULAH-${orderId}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-  const callbackUrl = `${STOREFRONT_URL}/payment-callback?reference=${encodeURIComponent(reference)}`;
+  const callbackUrl = `${STOREFRONT_URL}/payment-callback`;
 
-  let paystackResponse: Response;
-  try {
-    paystackResponse = await fetch("https://api.paystack.co/transaction/initialize", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
-        "Content-Type": "application/json",
+  const paystackResponse = await fetch("https://api.paystack.co/transaction/initialize", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      email: user.email,
+      amount: amountKobo,
+      reference,
+      callback_url: callbackUrl,
+      metadata: {
+        order_id: order.id,
+        order_number: order.order_number,
+        payment_id: payment.id,
+        attempt_number: payment.attempt_number,
       },
-      body: JSON.stringify({
-        email: user.email,
-        amount: String(amountKobo),
-        currency: "NGN",
-        reference,
-        callback_url: callbackUrl,
-        metadata: {
-          order_id: order.id,
-          order_number: order.order_number,
-          customer_id: user.id,
-          payment_attempt_number: payment.attempt_number,
-        },
-      }),
-    });
-  } catch (error) {
-    console.error("Paystack initialize network error", { reference, order_id: order.id, error });
-    return json({ error: "PAYSTACK_NETWORK_ERROR", reference, version: VERSION }, 502);
+    }),
+  });
+
+  const providerData = await safeJson(paystackResponse);
+  if (!paystackResponse.ok || providerData?.status !== true || !providerData?.data?.authorization_url) {
+    console.error("Paystack initialize failed", paystackResponse.status, providerData);
+    return json({ error: "PAYMENT_PROVIDER_INITIALIZATION_FAILED", message: safeProviderMessage(providerData) }, 502);
   }
 
-  const provider = await safeJson(paystackResponse);
-  if (!paystackResponse.ok || !provider?.status || !provider?.data?.authorization_url) {
-    console.error("Paystack initialize rejected", {
-      reference,
-      order_id: order.id,
-      http_status: paystackResponse.status,
-      provider_message: provider?.message || null,
-    });
-    return json({
-      error: "PAYMENT_INITIALIZATION_FAILED",
-      reference,
-      provider_message: provider?.message || null,
-      provider_status: provider?.status ?? null,
-      http_status: paystackResponse.status,
-      version: VERSION,
-    }, 502);
-  }
-
-  const providerReference = String(provider.data.reference || reference);
-  const rawResponse = provider.data;
   const { error: updateError } = await adminClient
     .from("payments")
     .update({
-      provider_reference: providerReference,
-      raw_response: rawResponse,
-      updated_at: new Date().toISOString(),
+      provider_reference: reference,
+      amount: amountKobo,
+      raw_response: {
+        ...providerData,
+        authorization_url: providerData.data.authorization_url,
+        access_code: providerData.data.access_code || null,
+      },
     })
     .eq("id", payment.id)
     .eq("status", "pending");
-  if (updateError) {
-    console.error("Payment reference persistence failed", { payment_id: payment.id, reference: providerReference, error: updateError });
-    return json({ error: "PAYMENT_REFERENCE_PERSISTENCE_FAILED", reference: providerReference, version: VERSION }, 500);
-  }
+  if (updateError) throw databaseError(updateError, "PAYMENT_ATTEMPT_UPDATE_FAILED");
 
   return json({
-    authorization_url: provider.data.authorization_url,
-    access_code: provider.data.access_code || null,
-    reference: providerReference,
-    reservation_expires_at: reservation.expires_at,
-    payment_attempt_number: payment.attempt_number,
-    reused: false,
+    authorization_url: providerData.data.authorization_url,
+    access_code: providerData.data.access_code || null,
+    reference,
     version: VERSION,
   });
 }
@@ -199,192 +171,142 @@ async function verify(request: Request, url: URL) {
   if (!PAYSTACK_SECRET_KEY) return json({ error: "PAYMENT_SERVER_NOT_CONFIGURED", version: VERSION }, 503);
 
   const user = await requireUser(request);
-  const reference = url.searchParams.get("reference")?.trim();
+  const reference = String(url.searchParams.get("reference") || url.searchParams.get("trxref") || "").trim();
   if (!reference) return json({ error: "REFERENCE_REQUIRED" }, 400);
 
   const { data: payment, error: paymentError } = await adminClient
     .from("payments")
-    .select("id,order_id,amount,status,provider_reference,attempt_number")
-    .eq("provider_reference", reference)
+    .select("id,order_id,provider_reference,status,amount")
     .eq("provider", "paystack")
+    .eq("provider_reference", reference)
     .maybeSingle();
   if (paymentError) throw databaseError(paymentError, "PAYMENT_LOOKUP_FAILED");
   if (!payment) return json({ error: "PAYMENT_NOT_FOUND" }, 404);
 
   const { data: order, error: orderError } = await adminClient
     .from("orders")
-    .select("id,order_number,customer_id,total,status,payment_status")
+    .select("id,customer_id,total")
     .eq("id", payment.order_id)
-    .eq("customer_id", user.id)
     .maybeSingle();
   if (orderError) throw databaseError(orderError, "ORDER_LOOKUP_FAILED");
-  if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404);
+  if (!order || order.customer_id !== user.id) return json({ error: "ORDER_NOT_FOUND" }, 404);
 
-  const verified = await verifyWithPaystack(reference);
-  if (!verified.ok) return json({ error: "PAYMENT_VERIFICATION_FAILED", reference, version: VERSION }, 502);
-
-  const transaction = verified.data || {};
-  const providerStatus = String(transaction.status || "").toLowerCase();
-  const amountKobo = Number(transaction.amount);
-  if (!Number.isFinite(amountKobo) || amountKobo < 0) return json({ error: "PAYMENT_AMOUNT_INVALID", reference, version: VERSION }, 502);
-
-  if (providerStatus === "success" || providerStatus === "failed") {
-    const result = await finalizePayment(reference, providerStatus, amountKobo, verified.raw, transaction.paid_at || null);
-    return json({ ...normalizeFinalization(result), provider_status: providerStatus, order_id: order.id, order_number: order.order_number, reference, version: VERSION });
+  const providerResponse = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
+    headers: { Authorization: `Bearer ${PAYSTACK_SECRET_KEY}` },
+  });
+  const providerData = await safeJson(providerResponse);
+  if (!providerResponse.ok || providerData?.status !== true) {
+    return json({ error: "PAYMENT_PROVIDER_VERIFICATION_FAILED", message: safeProviderMessage(providerData) }, 502);
   }
 
-  return json({
-    order_id: order.id,
-    order_number: order.order_number,
-    payment_status: "pending",
-    provider_status: providerStatus || "pending",
-    reference,
-    version: VERSION,
+  const transaction = providerData.data;
+  const expectedAmount = Math.round(Number(order.total) * 100);
+  const paidAmount = Number(transaction?.amount);
+  const paid = transaction?.status === "success" && paidAmount === expectedAmount;
+
+  const finalStatus = paid ? "successful" : "failed";
+  const { data: finalized, error: finalizeError } = await adminClient.rpc("finalize_paystack_payment", {
+    p_reference: reference,
+    p_status: finalStatus,
+    p_amount: Number.isFinite(paidAmount) ? paidAmount : 0,
+    p_raw_response: providerData,
+    p_processed_at: new Date().toISOString(),
   });
+  if (finalizeError) throw databaseError(finalizeError, "PAYMENT_FINALIZATION_FAILED");
+
+  return json({ ok: true, paid, reference, transaction, finalization: finalized, version: VERSION });
 }
 
 async function webhook(request: Request) {
-  if (!PAYSTACK_SECRET_KEY) return new Response("Not configured", { status: 503 });
+  if (!PAYSTACK_SECRET_KEY) return json({ error: "PAYMENT_SERVER_NOT_CONFIGURED", version: VERSION }, 503);
 
   const rawBody = await request.text();
-  const signature = request.headers.get("x-paystack-signature");
-  if (!signature || !(await verifyHmacSha512(rawBody, PAYSTACK_SECRET_KEY, signature))) {
-    return new Response("Unauthorized", { status: 401 });
+  const signature = request.headers.get("x-paystack-signature") || "";
+  if (!signature || !(await verifySignature(rawBody, signature, PAYSTACK_SECRET_KEY))) {
+    return json({ error: "INVALID_WEBHOOK_SIGNATURE" }, 401);
   }
 
-  let event: Record<string, unknown>;
-  try {
-    event = JSON.parse(rawBody);
-  } catch {
-    return new Response("Bad request", { status: 400 });
-  }
+  const event = parseJson(rawBody);
+  if (!event || typeof event !== "object") return json({ error: "INVALID_WEBHOOK_PAYLOAD" }, 400);
 
-  const eventName = String(event?.event || "");
+  const eventName = String(event.event || "");
   if (eventName !== "charge.success" && eventName !== "charge.failed") {
-    return new Response("OK", { status: 200 });
+    return json({ received: true, ignored: true, event: eventName, version: VERSION });
   }
 
-  const transaction = (event.data || {}) as Record<string, unknown>;
-  const reference = String(transaction.reference || "").trim();
-  if (!reference) return new Response("OK", { status: 200 });
+  const reference = String(event?.data?.reference || "").trim();
+  const amount = Number(event?.data?.amount);
+  if (!reference) return json({ error: "WEBHOOK_REFERENCE_REQUIRED" }, 400);
 
-  const providerStatus = eventName === "charge.success" ? "success" : "failed";
-  const amountKobo = Number(transaction.amount);
-  if (!Number.isFinite(amountKobo)) return new Response("Bad request", { status: 400 });
-
-  try {
-    await finalizePayment(reference, providerStatus, amountKobo, event, String(transaction.paid_at || "") || null);
-    return new Response("OK", { status: 200 });
-  } catch (error) {
-    console.error("Paystack webhook finalization failed", { reference, event: eventName, error });
-    return new Response("Retry", { status: 500 });
-  }
-}
-
-async function finalizePayment(reference: string, status: string, amountKobo: number, rawResponse: unknown, paidAt: string | null) {
-  const { data, error } = await adminClient.rpc("finalize_paystack_payment", {
-    target_reference: reference,
-    target_status: status,
-    target_amount_kobo: Math.round(amountKobo),
-    target_raw_response: rawResponse,
-    target_paid_at: paidAt,
+  const status = eventName === "charge.success" ? "successful" : "failed";
+  const { data: finalized, error: finalizeError } = await adminClient.rpc("finalize_paystack_payment", {
+    p_reference: reference,
+    p_status: status,
+    p_amount: Number.isFinite(amount) ? amount : 0,
+    p_raw_response: event,
+    p_processed_at: new Date().toISOString(),
   });
-  if (error) {
-    console.error("Payment finalization RPC failed", { reference, status, error });
-    throw new Error("PAYMENT_FINALIZATION_FAILED");
+  if (finalizeError) {
+    console.error("Paystack webhook finalization failed", finalizeError);
+    return json({ error: "PAYMENT_FINALIZATION_FAILED" }, 500);
   }
-  return data;
+
+  return json({ received: true, reference, finalization: finalized, version: VERSION });
 }
 
 async function requireUser(request: Request) {
-  const authorization = request.headers.get("Authorization");
-  const token = authorization?.replace(/^Bearer\s+/i, "").trim();
+  const authorization = request.headers.get("Authorization") || "";
+  if (!authorization.startsWith("Bearer ")) throw new ResponseError("AUTH_REQUIRED", 401);
+  const token = authorization.slice(7).trim();
   if (!token) throw new ResponseError("AUTH_REQUIRED", 401);
 
   const { data, error } = await userClient.auth.getUser(token);
-  if (error || !data.user?.id) throw new ResponseError("AUTH_REQUIRED", 401);
+  if (error || !data.user) throw new ResponseError("AUTH_INVALID", 401);
   return data.user;
 }
 
-async function verifyWithPaystack(reference: string) {
-  try {
-    const response = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
-      headers: { Authorization: `Bearer ${PAYSTACK_SECRET_KEY}` },
-    });
-    const raw = await safeJson(response);
-    return { ok: response.ok && Boolean(raw?.status), data: raw?.data || null, raw };
-  } catch (error) {
-    console.error("Paystack verify network error", { reference, error });
-    return { ok: false, data: null, raw: null };
-  }
-}
-
-async function verifyHmacSha512(payload: string, secret: string, signature: string) {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-512" },
-    false,
-    ["sign"],
-  );
-  const signed = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
-  const expected = [...new Uint8Array(signed)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+async function verifySignature(payload: string, signature: string, secret: string) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-512" }, false, ["sign"]);
+  const digest = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+  const expected = Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
   return timingSafeEqual(expected, signature.trim().toLowerCase());
 }
 
 function timingSafeEqual(a: string, b: string) {
   if (a.length !== b.length) return false;
   let result = 0;
-  for (let index = 0; index < a.length; index++) result |= a.charCodeAt(index) ^ b.charCodeAt(index);
+  for (let i = 0; i < a.length; i++) result |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return result === 0;
 }
 
-function extractAuthorization(rawResponse: unknown) {
-  if (!rawResponse || typeof rawResponse !== "object") return null;
-  const value = rawResponse as Record<string, unknown>;
-  const authorizationUrl = typeof value.authorization_url === "string" ? value.authorization_url : null;
-  if (!authorizationUrl) return null;
-  return {
-    authorization_url: authorizationUrl,
-    access_code: typeof value.access_code === "string" ? value.access_code : null,
-  };
-}
-
-function toKobo(value: unknown) {
-  const amount = Number(value);
-  if (!Number.isFinite(amount) || amount <= 0) return null;
-  const kobo = Math.round(amount * 100);
-  return Number.isSafeInteger(kobo) && kobo > 0 ? kobo : null;
-}
-
 async function readJson(request: Request) {
-  try {
-    return await request.json() as Record<string, unknown>;
-  } catch {
-    throw new ResponseError("INVALID_JSON", 400);
-  }
-}
-
-function databaseError(error: unknown, code: string) {
-  console.error(code, error);
-  return new ResponseError(code, 500);
-}
-
-function normalizeFinalization(value: unknown) {
-  if (value && typeof value === "object") return value;
-  return { payment_status: "unknown" };
+  try { return await request.json(); } catch { throw new ResponseError("INVALID_JSON", 400); }
 }
 
 async function safeJson(response: Response) {
-  try {
-    return await response.json();
-  } catch {
-    return null;
-  }
+  try { return await response.json(); } catch { return null; }
 }
 
-function json(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), { status, headers: jsonHeaders });
+function parseJson(value: string) {
+  try { return JSON.parse(value); } catch { return null; }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function safeProviderMessage(value: any) {
+  const message = typeof value?.message === "string" ? value.message : "Payment provider request failed";
+  return message.slice(0, 200);
+}
+
+function databaseError(error: any, fallback: string) {
+  console.error(fallback, error);
+  return new ResponseError(fallback, 500);
+}
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: jsonHeaders });
 }
 
 class ResponseError extends Error {
