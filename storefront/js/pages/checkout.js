@@ -3,6 +3,7 @@ import { getCurrentSession } from "../services/authService.js";
 import { getCustomerProfile } from "../services/profileService.js";
 import { getProductsByIds } from "../services/catalogService.js";
 import { getCart } from "../services/cartService.js";
+import { initializePaystackPayment } from "../services/paystackService.js";
 import { supabase } from "../lib/supabaseClient.js";
 
 initHeader(document.getElementById("site-header-nav"));
@@ -386,9 +387,11 @@ function updateReservationCountdown() {
 function isDeliveryEnabled() {
   return Boolean(deliverySettings?.is_delivery_enabled);
 }
+
 function calculateLocalDelivery() {
   return isDeliveryEnabled() ? Math.max(0, Number(deliverySettings?.delivery_fee ?? 0)) : 0;
 }
+
 function getLocalSubtotal() {
   return checkoutItems.reduce(
     (total, item) =>
@@ -421,21 +424,8 @@ function renderSummary(totals = null) {
 }
 
 async function initializePayment(orderId) {
-  const response = await fetch("/api/paystack/initialize", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${currentSession.access_token}`,
-    },
-    body: JSON.stringify({ order_id: orderId }),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(data?.error || "PAYMENT_INITIALIZATION_FAILED");
-    error.code = data?.error;
-    throw error;
-  }
-  if (!data.authorization_url) throw new Error("PAYMENT_INITIALIZATION_FAILED");
+  const data = await initializePaystackPayment(orderId);
+  if (!data?.authorization_url) throw new Error("PAYMENT_INITIALIZATION_FAILED");
   location.href = data.authorization_url;
 }
 
@@ -532,7 +522,6 @@ form.addEventListener("submit", async (event) => {
   try {
     if (!pendingOrderId) {
       const cartItems = checkoutItems.map(({ productId, quantity }) => ({ productId, quantity }));
-      const reservedProductIds = checkoutItems.map((item) => String(item.productId));
       const { data, error } = await supabase.rpc("create_pending_order", {
         cart_items: cartItems,
         delivery_name: customerProfile.full_name.trim(),
@@ -605,7 +594,17 @@ form.addEventListener("submit", async (event) => {
         "Your order is reserved, but payment could not be opened. Please try again.",
         "error",
       );
-    else setStatus("We could not prepare your order or payment. Please try again.", "error");
+    else if (error?.code === "PAYMENT_PROVIDER_INITIALIZATION_FAILED")
+      setStatus(
+        "Paystack could not initialize this payment. Please try again while your reservation is still active.",
+        "error",
+      );
+    else if (error?.code === "PAYMENT_ATTEMPT_AMBIGUOUS")
+      setStatus(
+        "This payment attempt is already linked to Paystack but needs review before retrying.",
+        "error",
+      );
+    else setStatus(error?.message || "Could not start payment. Please try again.", "error");
   }
 });
 
