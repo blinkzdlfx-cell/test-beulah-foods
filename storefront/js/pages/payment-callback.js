@@ -1,5 +1,6 @@
 import { getCurrentSession } from "../services/authService.js";
 import { removeCartItems } from "../services/cartService.js";
+import { verifyPaystackPayment } from "../services/paystackService.js";
 import { supabase } from "../lib/supabaseClient.js";
 
 const title = document.getElementById("payment-title");
@@ -53,13 +54,7 @@ async function init() {
   }
 
   try {
-    const response = await fetch(
-      `/api/paystack/verify?reference=${encodeURIComponent(reference)}`,
-      { headers: { Authorization: `Bearer ${session.access_token}` } },
-    );
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data?.error || "PAYMENT_VERIFICATION_FAILED");
-
+    const data = await verifyPaystackPayment(reference);
     const finalization = data?.finalization || {};
     const paymentStatus = finalization.payment_status;
     const orderId = finalization.order_id || data.order_id || null;
